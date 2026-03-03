@@ -1,0 +1,53 @@
+---
+title: "STA207_Final_Report"
+author: "ChiChun-Chen"
+date: "2026-03-03"
+output: html_document
+---
+
+## Setup
+
+```{r setup, include=TRUE}
+rm(list = ls())
+gc()
+
+# ---- 1. Packages ----
+pkgs <- c("haven","dplyr","tidyr","ggplot2","skimr","janitor","GGally",
+          "data.table","plotly","stringr","broom","sandwich","lmtest",
+          "ggalluvial", "forcats", "scales")
+to_install <- pkgs[!pkgs %in% installed.packages()[,"Package"]]
+if(length(to_install)>0) install.packages(to_install)
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+# ---- 2. Import data ----
+setwd("/Users/chichichen/Documents/Master/5-2026Winter/STA 207/Final_Project")
+df <- read_sav("STAR_Students.sav") %>% janitor::clean_names()
+
+cat("Total data count:", nrow(df), "\n")
+print(head(names(df), 25))
+
+# ---- 3. Variable maps ----
+map_long <- list(
+  class      = c(k="gkclasstype", g1="g1classtype", g2="g2classtype", g3="g3classtype"),
+  school_id  = c(k="gkschid",     g1="g1schid",     g2="g2schid",     g3="g3schid"),
+  teacher_id = c(k="gktchid",     g1="g1tchid",     g2="g2tchid",     g3="g3tchid"),
+  freelunch  = c(k="gkfreelunch", g1="g1freelunch", g2="g2freelunch", g3="g3freelunch"),
+  urban      = c(k="gksurban",    g1="g1surban",    g2="g2surban",    g3="g3surban"),
+  tyears     = c(k="gktyears",    g1="g1tyears",    g2="g2tyears",    g3="g3tyears"),
+  gender = "gender",
+  race   = "race"
+)
+
+# ---- 4.  ----
+
+
+# ---- 5. Outcomes (G3 Total Math Scale Score for SAT) ----
+outcomes <- keep_exist("g3tmathss")
+```
+
+
+
+
+
+
+
