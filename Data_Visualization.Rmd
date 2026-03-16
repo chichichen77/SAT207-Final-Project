@@ -4,7 +4,9 @@ author: "ChiChun-Chen"
 date: "2026-03-03"
 output: html_document
 ---
-# ---- Extract Stayers Table ---- 
+
+# ---- Extract Stayers Table ----
+
 ## 1. Setup
 
 ```{r setup, include=TRUE}
@@ -27,13 +29,10 @@ cat("Total data count:", nrow(df), "\n\n")
 
 # ---- 3. Variable maps ----
 map_long <- list(
-  class      = c(k="gkclasstype", g1="g1classtype", g2="g2classtype", g3="g3classtype"),
-  school_id  = c(k="gkschid",     g1="g1schid",     g2="g2schid",     g3="g3schid"),
-  teacher_id = c(k="gktchid",     g1="g1tchid",     g2="g2tchid",     g3="g3tchid"),
-  freelunch  = c(k="gkfreelunch", g1="g1freelunch", g2="g2freelunch", g3="g3freelunch"),
-  urban      = c(k="gksurban",    g1="g1surban",    g2="g2surban",    g3="g3surban"),
-  tyears     = c(k="gktyears",    g1="g1tyears",    g2="g2tyears",    g3="g3tyears"),
-  gender = "gender",
+  class      = c(k="gkclasstype"),
+  school_id  = c(k="gkschid"),
+  teacher_id = c(k="gktchid"),
+  freelunch  = c(k="gkfreelunch"),
   race   = "race"
 )
 
@@ -47,7 +46,7 @@ predictor_vars <- map_long %>%
   unique() %>%
   keep_exist(df)
 
-outcome <- "g3tmathss"
+outcome <- "gktmathss"
 
 # ---- 5. Build a new dataframe with all selected variables + outcome ----
 analysis_vars <- c(predictor_vars, outcome) %>%
@@ -57,208 +56,197 @@ analysis_vars <- c(predictor_vars, outcome) %>%
 df_analysis <- df %>%
   dplyr::select(all_of(analysis_vars))
 
-# check result
+# convert factor
 df_analysis <- df_analysis %>%
-  mutate(across(c("gkclasstype", "g1classtype", "g2classtype", "g3classtype"), as.factor))
+  mutate(across(c("gkclasstype"), as.factor))
 
+# drop rows with missing outcome or missing teacher ID
+df_analysis <- df_analysis %>%
+  dplyr::filter(!is.na(gktmathss), !is.na(gktchid), !is.na(gkfreelunch))
+
+# check result
 glimpse(df_analysis)
 names(df_analysis)
 ```
-
-
-
-## 2. [Pie Chart] Class Type
-Student who stay in the same class type for 4 pahses
 ```{r}
-## ---- 1. Add class path + stayer flag ----
-df_analysis <- df_analysis %>%
-  mutate(
-    class_k = .data[[map_long$class[["k"]]]],
-    class_1 = .data[[map_long$class[["g1"]]]],
-    class_2 = .data[[map_long$class[["g2"]]]],
-    class_3 = .data[[map_long$class[["g3"]]]],
-    path_complete = !is.na(class_k) & !is.na(class_1) & !is.na(class_2) & !is.na(class_3),
-    stayer = if_else(
-      path_complete,
-      (class_k == class_1) & (class_1 == class_2) & (class_2 == class_3),
-      NA
-    ),
-    group = case_when(
-      is.na(stayer) ~ "Missing",
-      stayer ~ "Stayer", #  (K=G1=G2=G3)
-      TRUE   ~ "Mover" # (changed class type)
-    )
-  )
+library(dplyr)
+library(ggplot2)
+library(forcats)
 
-## ---- 1. Count exact-match across grades ----
-stayer_table <- df_analysis %>%
-  count(group, name = "n") %>%
-  mutate(pct = n / sum(n))
+df_plot <- df %>%
+  filter(!is.na(gkschid), !is.na(gktmathss)) %>%
+  group_by(gkschid) %>%
+  mutate(school_median = median(gktmathss, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(gkschid = fct_reorder(as.factor(gkschid), school_median))
 
-stayer_table
-# knitr::kable(stayer_table, digits = 3)
-
-# Pie chart for eda class type
-pie_df <- stayer_table %>%
-  mutate(
-    label = paste0(group, "\n", n, " (", percent(pct, accuracy = 0.1), ")")
-  )
-ggplot(pie_df, aes(x = "", y = pct, fill = group)) +
-  geom_col(width = 1, color = "white") +
-  coord_polar(theta = "y") +
-  geom_text(aes(label = label),
-            position = position_stack(vjust = 0.5),
-            size = 3) +
-  labs(title = "Stayer v.s. Mover v.s. Missing Path Pie Chart") +
-  theme_void() +
-  theme(legend.position = "none")
-```
-
-## 3. [Bar Plot] Stayer class distribution
-```{r}
-plot_df <- df_analysis %>%
-  filter(stayer == TRUE) %>%
-  count(class_3) %>%
-  mutate(class_3 = factor(class_3, levels = c("1","2","3")))
-
-ggplot(plot_df, aes(x = class_3, y = n, fill = class_3)) +
-  geom_col(width = 0.7, show.legend = FALSE) +
-  geom_text(aes(label = n), vjust = -0.35, size = 4) +
+ggplot(df_plot, aes(x = gkschid, y = gktmathss, fill = school_median)) +
+  geom_boxplot(outlier.alpha = 0.4) +
+  coord_flip() +
   labs(
-    title = "Stayers: G3 Class Type Distribution",
-    x = "G3 class type",
-    y = "Count"
+    title = "Distribution of Kindergarten Math Scores by School",
+    x = "School ID",
+    y = "Kindergarten Total SAT Math Score",
+    fill = "School median"
   ) +
-  expand_limits(y = max(plot_df$n, na.rm = TRUE) * 1.10) +
-  theme_minimal()
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 6),
+    plot.title = element_text(face = "bold")
+  )
+
 ```
-
-## 4. [Sankey Plot] Transfer Class Type
-
 ```{r}
-# NA -> "Unknown"
-df_sankey <- df_analysis %>%
-  transmute(
-    K  = if_else(is.na(class_k), "Unknown", as.character(class_k)),
-    G1 = if_else(is.na(class_1), "Unknown", as.character(class_1)),
-    G2 = if_else(is.na(class_2), "Unknown", as.character(class_2)),
-    G3 = if_else(is.na(class_3), "Unknown", as.character(class_3))
-  )
+library(dplyr)
+library(ggplot2)
+library(forcats)
 
-#（K->G1, G1->G2, G2->G3）
-links_01 <- df_sankey %>% count(K,  G1, name="value") %>% transmute(source=paste0("K:",K),  target=paste0("G1:",G1), value=value)
-links_12 <- df_sankey %>% count(G1, G2, name="value") %>% transmute(source=paste0("G1:",G1), target=paste0("G2:",G2), value=value)
-links_23 <- df_sankey %>% count(G2, G3, name="value") %>% transmute(source=paste0("G2:",G2), target=paste0("G3:",G3), value=value)
+df_plot <- df %>%
+  filter(!is.na(gkschid), !is.na(gktmathss)) %>%
+  group_by(gkschid) %>%
+  mutate(school_median = median(gktmathss, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(gkschid = fct_reorder(as.factor(gkschid), school_median))
 
-links <- bind_rows(links_01, links_12, links_23)
-nodes <- tibble(name = unique(c(links$source, links$target)))
-links <- links %>%
-  mutate(
-    source_id = match(source, nodes$name) - 1L,
-    target_id = match(target, nodes$name) - 1L
-  )
-
-plot_ly(
-  type = "sankey",
-  arrangement = "snap",
-  node = list(
-    label = nodes$name,
-    pad = 15,
-    thickness = 15
-  ),
-  link = list(
-    source = links$source_id,
-    target = links$target_id,
-    value  = links$value
-  )
-) %>%
-  layout(title = "Class-type Path Sankey Plot")
-```
-
-##  5. Extract stayer sample
-```{r}
-# Original Class Type Distribution
-df_stayers <- df_analysis %>%
-  filter(path_complete == TRUE, stayer == TRUE) %>%
-  rename(classtype = class_3) %>%
-  select(-any_of(c(
-    "gkclasstype","g1classtype","g2classtype","g3classtype",
-    "class_k","class_1","class_2",
-    "path_complete","stayer","group","n_switch"
-  )))
-
-# Plot 1 
-df_stayers %>%
-  mutate(classtype = as.factor(classtype)) %>%
-  count(classtype, name = "n_total") %>%
-  ggplot(aes(x = classtype, y = n_total, fill = classtype)) +
-  geom_col(width = 0.7, show.legend = FALSE) +
-  geom_text(aes(label = n_total), vjust = -0.3, size = 4) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+ggplot(df_plot, aes(x =gktmathss , y = gkschid , fill = school_median)) +
+  geom_boxplot(outlier.alpha = 0.4) +
+  coord_flip() +
+  scale_fill_gradientn(
+    colors = c("red", "orange", "yellow", "green", "blue", "purple")
+  ) +
   labs(
-    title = "Stayers G3 Class Type Distribution",
-    x = "G3 class type",
-    y = "Count"
+    title = "Distribution of Kindergarten Math Scores by School",
+    x = "Kindergarten Total SAT Math Score",
+    y ="School ID" ,
+    fill = "School median"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90,size=5),
+    axis.text.y = element_text(size = 6),
+    plot.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+## 2. [EDA] Free lunch eligibility
+
+
+```{r}
+# count
+df_analysis %>%
+  count(gkfreelunch)
+
+# proportion
+df_analysis %>%
+  count(gkfreelunch) %>%
+  mutate(prop = n / sum(n))
+
+# Freelunch classtype
+df_analysis %>%
+  ggplot(aes(x = gkclasstype, fill = gkfreelunch)) +
+  geom_bar(position = "dodge") +
+  geom_text(
+    stat = "count",
+    aes(label = after_stat(count)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.3
+  ) +
+  labs(
+    title = "Free Lunch Eligibility by Class Type",
+    x = "Class Type",
+    y = "Count",
+    fill = "Free Lunch"
   ) +
   theme_minimal()
+```
 
-# Class Type Distribution With Missing Outcome
-df_sum <- df_stayers %>%
-  mutate(classtype = as.factor(classtype)) %>%
-  group_by(classtype) %>%
-  summarise(
-    n_na  = sum(is.na(g3tmathss)),
-    n_obs = sum(!is.na(g3tmathss)),
-    n_total = n(),
-    .groups = "drop"
-  ) %>%
-  arrange(classtype) %>%
-  mutate(x = as.numeric(classtype))  # 給 geom_rect 用
-# Plot 2
-ggplot(df_sum, aes(x = classtype)) +
-  geom_col(aes(y = n_na), fill = "grey70", width = 0.7) +
-  geom_rect(
-    aes(
-      xmin = x - 0.35, xmax = x + 0.35,
-      ymin = n_na, ymax = n_total,
-      fill = classtype
-    ),
-    color = NA
-  ) +
-  geom_text(aes(y = n_total, label = n_total), vjust = -0.3, size = 4) +
-  geom_text(aes(y = n_na, label = ifelse(n_na > 0, n_na, "")),
-            color = "black", size = 3.6) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+## 3. Free Lunch Box plot
+
+```{r}
+df_analysis %>%
+  filter(!is.na(gkfreelunch), !is.na(gktmathss)) %>%
+  mutate(gkfreelunch = factor(gkfreelunch, levels = c(1, 2), labels = c("Free Lunch", "No Free Lunch"))) %>%
+  ggplot(aes(x = gkfreelunch, y = gktmathss, fill = gkfreelunch)) +
+  geom_boxplot() +
   labs(
-    title = "Stayers G3 Class Type Distridution with Missing Outcome Count",
-    x = "G3 class type",
-    y = "Count"
+    title = "Boxplot of Kindergarten Math Score by Free Lunch Status",
+    x = "Free Lunch Status",
+    y = "Kindergarten Total Math Score"
   ) +
   theme_minimal() +
   theme(legend.position = "none")
+```
+## 4. Free Lunch Violent plot
 
-# Filter NA values
-df_stayers_nna <- df_stayers
-df_stayers_nna %>%
-  filter(!is.na(g3tmathss))
-# Plot 3
-df_stayers_nna%>%
-  mutate(classtype = as.factor(classtype)) %>%
-  count(classtype, name = "n_obs") %>%
-  ggplot(aes(x = classtype, y = n_obs, fill = classtype)) +
-  geom_col(width = 0.7, show.legend = FALSE) +
-  geom_text(aes(label = n_obs), vjust = -0.3, size = 4) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+```{r}
+df_analysis %>%
+  filter(!is.na(gkfreelunch), !is.na(gktmathss)) %>%
+  mutate(gkfreelunch = factor(gkfreelunch, levels = c(1, 2), labels = c("Free Lunch", "No Free Lunch"))) %>%
+  ggplot(aes(x = gkfreelunch, y = gktmathss, fill = gkfreelunch)) +
+  geom_boxplot() +
   labs(
-    title = "Stayers G3 Class Type Distribution",
-    x = "G3 class type",
-    y = "Count"
+    title = "Boxplot of Kindergarten Math Score by Free Lunch Status",
+    x = "Free Lunch Status",
+    y = "Kindergarten Total Math Score"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(legend.position = "none")
 ```
 
-# ---- Missing values pre-processing ---- 
-## Investigate what variable we are going to deal with
+## 4. TeacherID
+
+```{r}
+Teacher_Stats <- df %>%
+  group_by(gktchid) %>%
+  summarise(
+    mean = round(mean(gktmathss, na.rm = T), 1),
+    median = median(gktmathss, na.rm = T),
+    min = min(gktmathss, na.rm = T),
+    max = max(gktmathss, na.rm = T),
+    Q1 = round(quantile(gktmathss, 0.25, na.rm = T), 1),
+    Q3 = round(quantile(gktmathss, 0.75, na.rm = T), 1)
+  )
+
+Teacher.Stats.Head = head(Teacher_Stats, 10)
+Teacher.Stats.Head
+
+Teacher.Stats.Table = kable(Teacher.Stats.Head, "html") %>% 
+  kable_styling("striped", full_width = F)
+
+save_kable(Teacher.Stats.Table, file = "Teacher_Stats_Table.png")
+
+
+```
+
+## 5. Box-Plot of three class type SAT math score
+
+```{r}
+boxplot(gktmathss ~ gkclasstype, data = df_analysis)
+```
+
+# ---- [F-test] Classtype outcome score ----
+
+```{r}
+fit <- aov(gktmathss ~ gkclasstype, data = df_analysis)
+summary(fit)
+```
+# ---- [T-test] Regular vs Regular+Aid ----
+
+```{r}
+df_23 <- df_analysis %>%
+  dplyr::filter(gkclasstype %in% c(2, 3), !is.na(gktmathss)) %>%
+  dplyr::mutate(gkclasstype = droplevels(as.factor(gkclasstype)))
+
+table(df_13$gkclasstype)
+
+t.test(gktmathss ~ gkclasstype, data = df_23)
+```
+
+
+
+# ---- NO NEED TO USE ----
+
 ```{r}
 na_check_function <- function(data,
                               group_col = "classtype",
@@ -336,8 +324,8 @@ na_check_function <- function(data,
   na_24x4
 }
 
-vars_24 <- setdiff(names(df_stayers), "classtype")
-na_check_function(df_stayers, group_col = "classtype", vars = vars_24,
+vars_24 <- setdiff(names(df_analysis), "classtype")
+na_check_function(df_analysis, group_col = "classtype", vars = vars_24,
                               include_type = TRUE, include_rate = TRUE)
 ```
 
@@ -404,7 +392,7 @@ impute_continuous_lm_function <- function(data, target, predictors, min_complete
   if(nrow(train) < min_complete){
     warning(paste("Too few complete cases for", target, "- fallback to median"))
     med <- median(data[[target]], na.rm = TRUE)
-    data[[target]][idx] <- as.integer(round(med))   # <- 整數
+    data[[target]][idx] <- as.integer(round(med))
     return(data)
   }
 
@@ -455,6 +443,7 @@ impute_star_covariates_function <- function(data,
 ```
 
 ## Fill in missing values
+
 ```{r}
 df_stayers_imp <- impute_star_covariates_function(df_stayers, seed = 123)
 
