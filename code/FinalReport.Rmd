@@ -541,7 +541,7 @@ References:
 
 Acknowledgement:
 
-Our interpretations and conclusions are our own.
+Generative AI was used to assist with code snippets for some visualizations. Our interpretations and conclusions are our own.
 
 <a href="#top" class="back-to-top-btn" title="Back to top">↑ Top</a>
 
