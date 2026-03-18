@@ -418,12 +418,14 @@ The Residuals Vs Fitted plot shows no obvious concerns in the spread of the data
 ```{r, include=TRUE}
 #Residuals Vs Fitted Plot
 STAR.RvF = plot(STAR.Model, which = 1, main = "Residuals Vs. Fitted", xlab = "Fitted Values", ylab = "Residuals")
+STAR.RvF
 
 STAR.RvF.J = ggplot(data.frame(STAR.Model.Fitted, STAR.Model.Residuals), aes(x = STAR.Model.Fitted, y = STAR.Model.Residuals)) +
   geom_jitter(width = 0.4, height = 0, alpha = 0.3) +
   geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
   labs(x = "Fitted Values (Jittered)", y = "Residuals", title = "Residuals Vs. Fitted (Jittered)") +
   theme_bw()
+STAR.RvF.J
 ```
 
 #### 3. Relabeling Class Type Using Class Size
