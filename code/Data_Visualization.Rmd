@@ -96,6 +96,7 @@ ggplot(df_plot, aes(x = gkschid, y = gktmathss, fill = school_median)) +
   )
 
 ```
+
 ```{r}
 library(dplyr)
 library(ggplot2)

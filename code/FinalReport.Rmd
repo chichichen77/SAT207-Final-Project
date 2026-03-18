@@ -1,0 +1,522 @@
+---
+title: "Analysis of the effect of class size on student academic performance"
+author: "Chi-Chun Chen, Elaine Guo, Skylar Calandra, William Baggott"
+output:
+  html_document:
+    theme:
+      version: 5
+      bootswatch: litera
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+::: {#top}
+:::
+
+## Background {#background}
+
+The Student Teacher Achievement Ratio study was a randomized experiment conducted over the course of 4 years (1985 - 1989) at various schools in Tennessee. The main goal of the experiment was to investigate the effect of class size on student performance in Kindergarten through 3rd grade. Beginning in Kindergarten, participating students were randomly assigned into one of three treatment groups based on class size: small class (13 - 17 students), regular class (22-25 students) and regular class plus aide which is the same size as the regular class group but with an additional teacher’s aide. Within each school, teachers were also randomly assigned across class size groups. Academic output was tracked using a number of metrics including standardized (Stanford Achievement Test, referred to as SAT) and curriculum-based (Basic Skills First, referred to as BSF) test scores in various subjects, mastery of objectives, and a motivation score. A large amount of covariate data was also recorded based on students, schools, and teachers which gives us access to additional useful information that we can potentially implement as precision variables in our analysis. It is important to note that the precision variables are not necessary to establish causality as this is already handled by random assignment. However, if we account for variables related to ethnic and socioeconomic background of students, teacher experience and credentials, and school location (among others), we can possibly improve the precision and accuracy of the treatment effect estimates by explaining more of the variation in academic performance.
+
+::: section-nav
+<a href="#questions" class="next-section-btn">👉 Next: Questions of Interest</a>
+:::
+
+## Questions of Interest {#questions}
+
+**Does the assigned Kindergarten class type have an effect on Kindergarten Math SAT scores?**
+
+In this experiment, the random assignment of both students and teachers is key in balancing confounders among treatment groups and theoretically establishing causality between class size and academic metrics. We say theoretically because there are some notable issues that make it more complicated to extract causality. First of all, random assignment is disrupted by both non-stayers and non-compliers. Non-stayers are defined as students who are only part of the experiment for one to three years, instead of the full four years. Non-compliers are students who switch treatment groups during the experiment. By overriding the original random assignment, these groups create an imbalance of the confounders and prevent a traditional causal analysis for the entire experiment. This is because compliance and staying is not random: there are systematic differences between compliers and non-compliers, stayers and non-stayers that can affect outcomes. For instance, it is possible that non-compliers were switched to a smaller class size at their parents’ request, and having parents who care enough to do that is a factor that might be associated with higher test scores (maybe they are also hiring a tutor on the side.)
+
+Adding onto this, SUTVA is violated when looking at the experiment over multiple years. The first component of SUTVA – consistency of treatment across all units in a treatment group – is violated due to the fact that treatment groups are based on ranges of class sizes (13-17, 22-25) so there is variation across small, regular, and regular with aide classes when it comes to number of students. Non-compliers/switchers and non-stayers also ensure that class sizes are fluctuating year to year, and this may even cause some classes to go from small to regular or vice versa. The second component of SUTVA – no interference between subjects – is also broken because there is interaction between students that occurs outside of the classroom as well as within the classroom between students who have switched classes (spillover effect.) Overall, these violations can result in biased causal estimates.
+
+Based on Project STAR’s limitations outlined above, we decided to only focus on kindergarten. Our reasoning behind this is that it is the stage of the experiment that is most closely aligned with the original random assignment whereas the outcomes for later grades are more vulnerable to switching, reassignment, class size fluctuations, and cumulative exposure differences. Thus, narrowing our scope to kindergarten preserves the cleanest treatment to outcome link. In turn, this provides us with the strongest basis for causal interpretation of the actual treatment on the entire sample as opposed to the effect of treatment assignment (which can be estimated via ITT). One thing to note is that the immediate effects make be modest as subjects only have one year of exposure to the treatment.
+
+With regards to our response variable, we opted to go with math scores since intuitively we believe math is the subject where the classroom and teaching environment typically play the largest role. Whereas our concept of the English language can be learned both actively and passively, math is a topic that is most effectively learned in class via hands-on activities and assistance from teachers. Hence, since we assume a higher proportion of learning is done in class for math compared with other subjects, our logic is that focusing on standardized scores such as the SAT math scale gives us the best indication of whether class size had an effect on student performance.
+
+::: section-nav
+<a href="#descriptive-analysis" class="next-section-btn">👉 Next: Descriptive Analysis</a>
+:::
+
+## Descriptive Analysis {#descriptive-analysis}
+
+#### Dataset Overview
+
+The dataset used in this analysis comes from the Project STAR experiment, which follows students from kindergarten through later grades. The dataset contains detailed information about students, teachers, and schools, including demographic characteristics, identifiers for instructional groups, and academic performance measures. The initial dataset comprises 11,601 observations across 379 variables.
+
+For this exploratory analysis, we focus on kindergarten total SAT math scores, which reflect students’ early academic preparation. Several variables are considered in the analysis, including school ID, teacher ID, race, and free-lunch status. We filtered out observations with missing values in gktmathss, gktchid, and gkfreelunch. After this data cleaning step, 5,853 observations remained, and the following analysis is based on this cleaned dataset.
+
+Among these variables, school ID and teacher ID represent hierarchical grouping structures, while race and free-lunch status represent students’ family background characteristics that may influence academic performance.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+library(tidyverse)
+library(haven)
+library(lme4)
+library(emmeans)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(car)
+
+data = haven::read_sav("STAR_Students.sav")
+
+# create a dataset that only considers observations that aren't missing any variables of interest
+data_clean = data %>%
+  filter(!is.na(gkclasstype)) %>%
+  filter(!is.na(gkschid)) %>%
+  filter(!is.na(race)) %>%
+  filter(!is.na(gktchid)) %>%
+  filter(!is.na(gkfreelunch)) %>%
+  filter(!is.na(gktmathss))
+```
+
+```{r, include=FALSE}
+# Clean data and create new variables that we needed
+# factor categorical variables
+data_clean$gkclasstype = factor(data_clean$gkclasstype)
+data_clean$gkschid = factor(data_clean$gkschid)
+data_clean$race = factor(data_clean$race)
+data_clean$gktchid = factor(data_clean$gktchid)
+data_clean$gkfreelunch = factor(data_clean$gkfreelunch)
+# number of observations
+nrow(data_clean)
+
+# create a new variable for race that indicates Black vs. non-Black
+data_clean_2 = data_clean %>%
+  mutate(race_bnb = (race==2))
+
+levels(data_clean_2$gkclasstype)
+levels(data_clean_2$gkfreelunch)
+
+# rename factor levels
+levels(data_clean_2$gkclasstype) = c("Small", "Regular", "Regular+Aide")
+```
+
+#### 1. School and Kindergarten Math Scores
+
+The boxplots indicate that the median math scores across schools are relatively similar, but the variability within schools is slightly different. Some schools show a wider interquartile range and more extreme observations.
+
+Although no strong pattern emerges, the differences in spread and the presence of outliers across schools indicate that school-level variation may exist. Since students are naturally clustered within schools, ignoring this structure may underestimate the variability in student performance.
+
+Therefore, school ID represents a potential group-level source of variation that should be considered in the modeling stage. And we wanted to include school ID as a fixed effect in the model.
+
+```{r}
+df_plot <- data_clean_2 %>%
+  filter(!is.na(gkschid), !is.na(gktmathss)) %>%
+  group_by(gkschid) %>%
+  mutate(school_median = median(gktmathss, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(gkschid = fct_reorder(as.factor(gkschid), school_median))
+
+ggplot(df_plot, aes(x =gktmathss , y = gkschid , fill = school_median)) +
+  geom_boxplot(outlier.alpha = 0.4) +
+  coord_flip() +
+  scale_fill_gradientn(
+    colors = c("red", "orange", "yellow", "green", "blue", "purple")
+  ) +
+  labs(
+    title = "Distribution of Kindergarten Math Scores by School",
+    x = "Kindergarten Total SAT Math Score",
+    y ="School ID" ,
+    fill = "School median"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90,size=5),
+    axis.text.y = element_text(size = 6),
+    plot.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+#### 2. Teacher ID and Kindergarten Math Scores
+
+Teacher ID is the closest variable we have to class ID, because knowing a student’s teacher usually tells us which class the student was in. Students in the same class may be correlated since they share the same teacher, classroom environment, and peer interactions.
+
+On this page, we present summary statistics of kindergarten math scores by teacher ID. From the table, we can see that the mean scores and the spread of scores vary across teachers. This suggests that teacher-level variation may be important. It is also possible that differences in teaching style, classroom environment, or student interactions may influence student performance. So we include Teacher ID in our model to account for this variation.
+
+**Table: Summary Statistics of a Sample of Teacher IDs**
+
+```{r}
+Teacher_Stats <- data_clean_2 %>%
+  group_by(gktchid) %>%
+  summarise(
+    mean = round(mean(gktmathss, na.rm = T), 1),
+    median = median(gktmathss, na.rm = T),
+    min = min(gktmathss, na.rm = T),
+    max = max(gktmathss, na.rm = T),
+    Q1 = round(quantile(gktmathss, 0.25, na.rm = T), 1),
+    Q3 = round(quantile(gktmathss, 0.75, na.rm = T), 1)
+  )
+
+Teacher.Stats.Head = head(Teacher_Stats, 10)
+Teacher.Stats.Head
+```
+
+**Boxplot of Math Scores by Teachers**
+
+```{r, include=FALSE}
+# Boxplot of Math Scores by Teachers
+ggplot(df_plot, aes(x = factor(gktchid), y = gktmathss)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Variation Across Groups", x = "Random Effect Levels", y = "Outcome")
+```
+
+#### 3. Race and Kindergarten Math Scores
+
+For race, we grouped students into two categories because the number of students in the other race groups was relatively small.
+
+Looking at the boxplot above, it suggests that Non-Black students tend to have slightly higher median scores than Black students. The upper quartile for the Non-Black group is also somewhat higher.
+
+This indicates that race is associated with differences in average performance, but it does not completely determine student outcomes.
+
+Race may capture differences in socioeconomic conditions or educational opportunities, so it is reasonable to include race as a control variable in the statistical model.
+
+```{r}
+ggplot(data_clean_2 %>% 
+         mutate(race_bnb = factor(race_bnb,
+                                  levels = c(FALSE, TRUE),
+                                  labels = c("Non-Black", "Black"))),
+       aes(x = race_bnb, y = gktmathss, fill = race_bnb)) +
+  geom_boxplot() + 
+  theme_minimal() +
+  labs(
+    title = "Variation Between Black and Non-Black Races",
+    x = "Race",
+    y = "Kindergarten Math Score",
+    fill = "Race"
+  )
+```
+
+#### 4. Free-Lunch Status and Kindergarten Math Scores
+
+Free-lunch eligibility shows students’ socioeconomic background. The figure shows that students who are not eligible for free lunch tend to have higher math scores than those who are eligible. The distribution for the non-free-lunch group is slightly shifted upward, which indicates there are more students with relatively higher scores in this group.
+
+In addition to the difference in average score level, the violin plot also shows the density of the score distributions. Students eligible for free lunch have a wider spread toward lower score values, while students not eligible for free lunch have more density in the middle-to-higher score range. This may suggest that students who are not eligible for free lunch have better family economic conditions and may have more learning resources.
+
+We conclude that free-lunch eligibility may reflect socioeconomic conditions that are related to early academic preparation. Therefore, it is reasonable to include free-lunch status as a control variable in our statistical model.
+
+```{r}
+data_clean_2 %>%
+  filter(!is.na(gkfreelunch), !is.na(gktmathss)) %>%
+  mutate(gkfreelunch = factor(gkfreelunch,
+                              levels = c(1, 2),
+                              labels = c("Free Lunch", "No Free Lunch"))) %>%
+  ggplot(aes(x = gkfreelunch, y = gktmathss, fill = gkfreelunch)) +
+  geom_violin(trim = FALSE) +
+  labs(
+    title = "Violin Plot of Kindergarten Math Score by Free Lunch Status",
+    x = "Free Lunch Status",
+    y = "Kindergarten Total Math Score"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Overall, the exploratory analysis suggests that both individual-level factors (race and free-lunch status) and group-level factors (school ID and teacher ID) may contribute to variation in students’ math performance. Therefore, these variables will be considered in the statistical model.
+
+::: section-nav
+<a href="#proposed-model" class="next-section-btn">👉 Next: Proposed Model</a>
+:::
+
+## Proposed Model {#proposed-model}
+
+Based on our initial exploration of the data, we propose the following statistical model:
+
+$$
+Y_{ijkls} = \mu + \alpha_i + \beta_j + \gamma_k + \delta_l + u_s + \epsilon_{ijkls}
+$$
+
+-   $Y$ : Kindergarten total math SAT score
+
+-   $\mu$ : Overall mean
+
+-   $\alpha$ : Class type (Small, Regular, Regular + Aide)
+
+-   $\beta$ : School ID
+
+-   $\gamma$ : Race (Black or Other)
+
+-   $\delta$ : Free lunch status (Free Lunch, No Free Lunch)
+
+-   $u$ : Teacher ID
+
+-   $\epsilon$ : Error term
+
+### Model Justification
+
+We aim to estimate students’ Kindergarten total math SAT score using a linear mixed-effects model. We are interested in interpreting the effect of the various levels of class type on Kindergarten total math SAT scores, so class type is included as a fixed effect. To account for stratified randomized design of the STAR study, school ID is also included as a fixed effect. Since we suspect that the distributions of scores differ meaningfully based on race and free lunch status, we have included these covariates in our model as well. Specifically, we include them as fixed effects; the levels of race and free lunch status in this study are not random. Finally, we include Teacher ID as a random effect; the levels of Teacher ID are random and unknown prior to the experiment. Furthermore, the number of levels of Teacher ID is relatively large, and the effect of Teacher ID on student scores is secondary for the purposes of our analysis.
+
+### Model Assumptions
+
+There are several assumptions built into our model.
+
+-   Error terms are assumed to be i.i.d. Normal with mean 0 and variance 2
+
+-   Random effects are assumed to be i.i.d Normal with mean 0 and variance u2
+
+-   Teacher ID and error terms are mutual independent
+
+-   There is no interaction between class type and race and no interaction between class type and free lunch status
+
+-   No interference: a student’s potential outcome is not affected by other students’ assigned class types
+
+-   Same version of each treatment: students in all “Small” classes receive the same version of the treatment (same for students in all “Regular” classes and “Regular + Aide” classes)
+
+We decided it was reasonable to assume the absence of interaction between class type and race as well as class type and free lunch status after inspection of the interaction plots (included in the appendix). There was no need to check for interaction between class type and Teacher ID since each teacher only taught one class (and therefore one class type); we are unable to measure how the effect of class type varies within each teacher. Finally, we did not further investigate whether there were interactions between variables excluding class type, since our analysis is focused on the causal relationship between class size and student performance. The presence of interaction terms that do not involve the class size variable will not impact our estimated coefficient for class size.
+
+```{r, include=FALSE}
+# Model Training
+set.seed(1)
+# mixed effects model (teacher ID is random effect)
+full_model = lmer(gktmathss ~ gkclasstype + gkschid + race_bnb + gkfreelunch + (1 | gktchid), data = data_clean_2)
+summary(full_model)
+plot(full_model, which = 1, main = "Residuals Vs. Fitted", xlab = "Fitted Values", ylab = "Residuals")
+```
+
+### Inference & Interpretation
+
+**Table: Summary of Estimated Coefficients (Fixed Effects)**
+
+Estimated Coefficients & Interpretations:
+
+-   **Intercept:** The expected Kindergarten math SAT score for a student in a small class who is not Black, attends the school with school ID 112038, and is eligible for free lunch is 457.29.
+
+-   **gkclasstypeRegular:** The Kindergarten math SAT score for a student in a regular class is 8.44 points lower than a student in a small class on average, all other variables held constant.
+
+-   **gkclasstypeRegular+Aide:** The estimated Kindergarten math SAT score for a student in a regular class is 8.19 points lower than a student in a small class on average, all other variables held constant.
+
+-   **race_bnbTRUE:** The estimated Kindergarten math SAT score for a Black student is 17.06 points lower than a student who is not Black on average, all other variables held constant.
+
+-   **gkfreelunchNotFreeLunch:** The estimated Kindergarten math SAT score for a student who is not eligible for free lunch is 19.81 points higher than an eligible student on average, all other variables held constant.
+
+-   **gktchid:** The ICC ratio is 0.149, which indicates that around 14.9% of variability in Kindergarten math SAT scores can be explained by the random effects from teacher ID.
+
+We observe that on average, students in small classes achieved a score that was 8.44 points higher than students in regular classes and 8.19 points higher than students in regular classes with an aide. Given that the highest Kindergarten total math scale score observed in the data is 626, we will assume that the total score is scored from 0 to 626. This would imply that students in small classes achieved around a 1.35% increase in score compared to students in regular classes and 1.31% increase compared to students in regular classes with an aide. Even if we assumed that the total score is scored starting from 288, the lowest observed score in our dataset, the percent increase would hover around 2% for both regular and regular with aide classes. Therefore, while there is a statistically significant increase in scores among students who were in small classes, the percent increase is relatively small. However, for some educators and parents who prioritize student outcomes, even a marginal increase in these scores is reason enough to advocate for smaller class sizes.
+
+We did not find statistically significant estimated differences in scores between regular classes and regular classes with an aide, which indicates that the effect of having a teaching aide may be minimal for this setting.
+
+Furthermore, based on our model’s estimated coefficients, there seems to be a statistically significant difference in scores by race; on average, students who are Black score lower compared to students of other races. There is also a statistically significant positive effect on scores for students who are not eligible for free lunch, enabling us to infer that students coming from low-income families tend to perform worse than their more advantaged peers.
+
+::: section-nav
+<a href="#sensitivity-analysis" class="next-section-btn">👉 Next: Sensitivity Analysis</a>
+:::
+
+## Sensitivity Analysis {#sensitivity-analysis}
+
+This section analyzes the assumptions for our given ANOVA model, to check how robust our chosen model turned out to be.
+
+#### 1. The QQ Plot of Residuals
+
+The QQ Plot of residuals for our mixed-effects model shows some heaviness in its tail, which suggests some deviance from a normal distribution. However, a majority of the data fits within the theoretical line, with one main section of outliers that breaks from the trend. Given that most of the data satisfies the assumption, and considering that outliers can be common in data observed in the real world, we can mostly choose to assume that normality is met within this model. However, a transformation to the model could still be considered if one wishes to further meet this assumption.
+
+```{r}
+STAR.Model = full_model
+STAR.Model.Residuals = residuals(STAR.Model)
+STAR.Model.Fitted = fitted(STAR.Model)
+
+#QQ Plot
+STAR.qqPlot = qqPlot(STAR.Model.Residuals, id = F, main = "QQ Plot", xlab = "Theoretical Quantiles", ylab = "Sample Quantiles")
+```
+
+#### 2. Residuals Vs. Fitted Plot
+
+The Residuals Vs Fitted plot shows no obvious concerns in the spread of the data itself, such as a fanning pattern. However, there is a noticeable trend of a few horizontal lines in the top right corner of the plot. To confirm if this pattern was a coincidence, the plot was jittered, which did not show any meaningful change from the previous plot. This suggests that our dependent variable is discrete, and that what is being observed is the “ceiling” of our data (in this case, students getting a perfect score). With this in mind, a different form of the model such as a Tobit model could be considered, that would better account for the SAT scores having a maximum and a minimum that can be earned.
+
+```{r, include=TRUE}
+#Residuals Vs Fitted Plot
+STAR.RvF = plot(STAR.Model, which = 1, main = "Residuals Vs. Fitted", xlab = "Fitted Values", ylab = "Residuals")
+
+STAR.RvF.J = ggplot(data.frame(STAR.Model.Fitted, STAR.Model.Residuals), aes(x = STAR.Model.Fitted, y = STAR.Model.Residuals)) +
+  geom_jitter(width = 0.4, height = 0, alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Fitted Values (Jittered)", y = "Residuals", title = "Residuals Vs. Fitted (Jittered)") +
+  theme_bw()
+```
+
+#### 3. Relabeling Class Type Using Class Size
+
+There were some Kindergarten classes that were initially labeled as regular or regular with teacher’s aid, but their actual class size dropped into the range for small classes. This would be one example of a potential violation of SUTVA; not all students in “Regular” classes received the same treatment, since some of them actually were in class sizes that were relatively small. To explore how accounting for actual class sizes would affect our conclusions, we re-labeled class types so that classes with 17 students or less were categorized as “Small” classes and then fit another model using the same covariates. The following tables summarize the results.
+
+**Table: Summary of Estimated Coefficients (After Relabeling)**
+
+Based on the estimated coefficients and estimated differences, our conclusion does not appear to change. The signs of the estimated coefficients and estimated differences are unchanged, and their magnitudes are relatively unchanged as well. There is still a statistically significant difference in the scores of small classes compared to both regular classes and regular classes with aide, and the difference in scores between regular and regular with aide is still not statistically significant.
+
+::: section-nav
+<a href="#conclusion" class="next-section-btn">👉 Next: Conclusion</a>
+:::
+
+## Conclusion {#conclusion}
+
+This look into the STAR project data studied how Kindergarten students' math performance changed based on the size of their classroom. Our main takeaway is that we found an advantage in scores for Kindergarten students in smaller classes compared to those in regular sized classrooms, with and without a teacher aid. While we also compared the differences between regular sized classrooms and regular sized classrooms with teacher aids, we were not able to find any meaningful difference between the two.
+
+It is worth keeping in mind that due to us attempting to maintain the original experimental design to the best of our ability, our findings are only representative of the Kindergarten students in the study, and do not represent the data as a whole. For future studies, analyzing the grades beyond Kindergarten and how they change over time could yield different results from our own. It is also worth noting that the STAR project data was collected starting in 1985, and data was collected in only Tennessee. A more modern dataset that collects data from a wider range of the United States could similarly give us even more insightful results.
+
+However, given the findings we already looked into, we believe that smaller class sizes should be further explored as a means of improving the education system in the United States. Even if it only ends up meaningfully impacting younger students such as Kindergarteners, any advancement is one worth considering. After all, finding potential trends like this is the first step towards improving the educational experience as a whole.
+
+::: section-nav
+<a href="#reference" class="next-section-btn">👉 Next: References & Acknowledgements</a>
+:::
+
+## References & Acknowledgements {#reference}
+
+References:
+
+-   <https://github.com/Edward-Jing/STA-207>
+
+-   <https://web.ma.utexas.edu/users/mks/statmistakes/fixedvsrandom.html>
+
+-   <https://web.pdx.edu/~newsomj/mlrclass/ho_randfixd.pdf>
+
+-   <https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/SIWH9F>
+
+Acknowledgement:
+
+Generative AI was used to assist with code snippets for some visualizations. Our interpretations and conclusions are our own.
+
+<a href="#top" class="back-to-top-btn" title="Back to top">↑ Top</a>
+
+```{=html}
+<style>
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.main-container {
+  max-width: 1050px;
+  margin: auto;
+}
+
+h1.title {
+  font-size: 2rem !important;
+  text-align: center;
+  font-weight: 700;
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+
+.author {
+  font-size: 1rem;
+  text-align: center;
+  color: #666;
+  margin-bottom: 28px;
+}
+
+h2 {
+  font-size: 1.6rem;
+  margin-top: 52px;
+  margin-bottom: 18px;
+  color: #222;
+  border-bottom: 2px solid #ececec;
+  padding-bottom: 8px;
+}
+
+h3 {
+  font-size: 1.2rem;
+  margin-top: 28px;
+  margin-bottom: 12px;
+}
+
+h4 {
+  font-size: 1.05rem;
+  margin-top: 24px;
+  margin-bottom: 10px;
+}
+
+.section-nav {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin: 30px 0 42px 0;
+}
+
+.next-section-btn {
+  display: inline-block;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: #f8f9fa;
+  border: 1px solid #e3e6e8;
+  color: #6c757d !important;
+  text-decoration: none !important;
+  font-weight: 500;
+  font-size: 0.84rem;
+  line-height: 1.2;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  transition: all 0.2s ease;
+}
+
+.next-section-btn:hover {
+  background: #f1f3f5;
+  color: #495057 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+}
+
+.back-to-top-btn {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 9999;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #f8f9fa;
+  border: 1px solid #e3e6e8;
+  color: #6c757d !important;
+  text-decoration: none !important;
+  font-weight: 500;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  transition: all 0.2s ease;
+  opacity: 0.96;
+}
+
+.back-to-top-btn:hover {
+  background: #f1f3f5;
+  color: #495057 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+}
+
+table {
+  width: 100%;
+  margin-top: 15px;
+  margin-bottom: 25px;
+  border-collapse: collapse;
+  font-size: 0.96rem;
+}
+
+table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  text-align: center;
+}
+
+table th, table td {
+  border: 1px solid #ddd;
+  padding: 10px 12px;
+}
+
+img {
+  display: block;
+  margin: 20px auto;
+  max-width: 100%;
+}
+</style>
+```
