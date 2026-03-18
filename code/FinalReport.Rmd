@@ -548,6 +548,7 @@ Generative AI was used to assist with code snippets for some visualizations. Our
 :::
 
 ## Appendix {#appendix}
+
 ```{r}
 # interaction plot of race and class type
 ggplot(data_clean_2, aes(x = gkclasstype, y = gktmathss, color = race_bnb, group = race_bnb)) +
@@ -572,6 +573,491 @@ ggplot(data_clean_2, aes(x = gkclasstype, y = gktmathss, color = gkfreelunch, gr
        color = "Free Lunch Status") +
   theme_minimal()
 ```
+
+#### R Code
+
+**Code for basic setup**
+
+```text
+rm(list = ls())
+gc()
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/chichichen/Documents/Master/5-2026Winter/STA 207/Final_Project")
+# ---- 1. Packages ----
+pkgs <- c("haven","dplyr","tidyr","ggplot2","skimr","janitor","GGally",
+          "data.table","plotly","stringr","broom","sandwich","lmtest",
+          "ggalluvial", "forcats", "scales", "purrr", "tibble")
+to_install <- pkgs[!pkgs %in% installed.packages()[,"Package"]]
+if(length(to_install)>0) install.packages(to_install)
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+# ---- 2. Import data ----
+# setwd("/Users/chichichen/Documents/Master/5-2026Winter/STA 207/Final_Project")
+df <- read_sav("../STAR_Students.sav") %>% janitor::clean_names()
+cat("Total data count:", nrow(df), "\n\n")
+
+# ---- 3. Variable maps ----
+map_long <- list(
+  class      = c(k="gkclasstype"),
+  school_id  = c(k="gkschid"),
+  teacher_id = c(k="gktchid"),
+  freelunch  = c(k="gkfreelunch"),
+  race   = "race"
+)
+
+# ---- 4. Keep only existing columns ----
+keep_exist <- function(x, data = df) {
+  x[x %in% names(data)]
+}
+
+predictor_vars <- map_long %>%
+  unlist(use.names = FALSE) %>%
+  unique() %>%
+  keep_exist(df)
+
+outcome <- "gktmathss"
+
+# ---- 5. Build a new dataframe with all selected variables + outcome ----
+analysis_vars <- c(predictor_vars, outcome) %>%
+  unique() %>%
+  keep_exist(df)
+
+df_analysis <- df %>%
+  dplyr::select(all_of(analysis_vars))
+
+# convert factor
+df_analysis <- df_analysis %>%
+  mutate(across(c("gkclasstype"), as.factor))
+
+# drop rows with missing outcome or missing teacher ID
+df_analysis <- df_analysis %>%
+  dplyr::filter(!is.na(gktmathss), !is.na(gktchid), !is.na(gkfreelunch))
+
+# check result
+glimpse(df_analysis)
+names(df_analysis)
+```
+
+**Descriptive Analysis**
+
+1.  Distribution of Kindergarten Math Scores by School
+
+```text
+df_plot <- df %>%
+  filter(!is.na(gkschid), !is.na(gktmathss)) %>%
+  group_by(gkschid) %>%
+  mutate(school_median = median(gktmathss, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(gkschid = fct_reorder(as.factor(gkschid), school_median))
+
+ggplot(df_plot, aes(x =gktmathss , y = gkschid , fill = school_median)) +
+  geom_boxplot(outlier.alpha = 0.4) +
+  coord_flip() +
+  scale_fill_gradientn(
+    colors = c("red", "orange", "yellow", "green", "blue", "purple")
+  ) +
+  labs(
+    title = "Distribution of Kindergarten Math Scores by School",
+    x = "Kindergarten Total SAT Math Score",
+    y ="School ID" ,
+    fill = "School median"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90,size=5),
+    axis.text.y = element_text(size = 6),
+    plot.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+2.  TeacherID vs math score table
+
+```text
+Teacher_Stats <- df %>%
+  group_by(gktchid) %>%
+  summarise(
+    mean = round(mean(gktmathss, na.rm = T), 1),
+    median = median(gktmathss, na.rm = T),
+    min = min(gktmathss, na.rm = T),
+    max = max(gktmathss, na.rm = T),
+    Q1 = round(quantile(gktmathss, 0.25, na.rm = T), 1),
+    Q3 = round(quantile(gktmathss, 0.75, na.rm = T), 1)
+  )
+
+Teacher.Stats.Head = head(Teacher_Stats, 10)
+Teacher.Stats.Head
+
+Teacher.Stats.Table = kable(Teacher.Stats.Head, "html") %>% 
+  kable_styling("striped", full_width = F)
+
+save_kable(Teacher.Stats.Table, file = "Teacher_Stats_Table.png")
+```
+
+3.  Free Lunch Violin plot
+
+```text
+df_analysis %>%
+  filter(!is.na(gkfreelunch), !is.na(gktmathss)) %>%
+  mutate(gkfreelunch = factor(gkfreelunch, levels = c(1, 2), labels = c("Free Lunch", "No Free Lunch"))) %>%
+  ggplot(aes(x = gkfreelunch, y = gktmathss, fill = gkfreelunch)) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot of Kindergarten Math Score by Free Lunch Status",
+    x = "Free Lunch Status",
+    y = "Kindergarten Total Math Score"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+**Inferential Analysis**
+
+Interaction Plots & Model Fitting
+
+```text
+## Setup
+# load libraries
+library(tidyverse)
+library(haven)
+library(lme4)
+
+# read in the data
+data = haven::read_sav("STAR_Students.sav")
+
+## Interaction Plots
+
+# create a dataset that only considers observations that aren't missing any variables of interest
+data_clean = data %>%
+  filter(!is.na(gkclasstype)) %>%
+  filter(!is.na(gkschid)) %>%
+  filter(!is.na(race)) %>%
+  filter(!is.na(gktchid)) %>%
+  filter(!is.na(gkfreelunch)) %>%
+  filter(!is.na(gktmathss))
+
+# factor categorical variables
+data_clean$gkclasstype = factor(data_clean$gkclasstype)
+data_clean$gkschid = factor(data_clean$gkschid)
+data_clean$race = factor(data_clean$race)
+data_clean$gktchid = factor(data_clean$gktchid)
+data_clean$gkfreelunch = factor(data_clean$gkfreelunch)
+
+# number of observations
+nrow(data_clean)
+
+# create a new variable for race that indicates Black vs. non-Black
+data_clean_2 = data_clean %>%
+  mutate(race_bnb = (race==2))
+
+levels(data_clean_2$gkclasstype)
+
+levels(data_clean_2$gkfreelunch)
+
+# rename factor levels
+levels(data_clean_2$gkclasstype) = c("Small", "Regular", "Regular+Aide")
+levels(data_clean_2$gkfreelunch) = c("FreeLunch", "NotFreeLunch")
+
+
+# interaction plot of race and class type
+ggplot(data_clean_2, aes(x = gkclasstype, y = gktmathss, color = race_bnb, group = race_bnb)) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  labs(title = "Interaction of Race and Class Type", 
+       x = "Class Type",
+       y = "Total Math SAT Score",
+       color = "Race") +
+  scale_color_discrete(labels = c("TRUE" = "Black", "FALSE" = "Non-Black")) +
+  theme_minimal()
+
+# interaction plot of free lunch status and class type
+ggplot(data_clean_2, aes(x = gkclasstype, y = gktmathss, color = gkfreelunch, group = gkfreelunch)) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  labs(title = "Interaction of Free Lunch Status and Class Type", 
+       x = "Class Type",
+       y = "Total Math SAT Score",
+       color = "Free Lunch Status") +
+  theme_minimal()
+
+## Model Training
+set.seed(1)
+
+# mixed effects model (teacher ID is random effect)
+full_model = lmer(gktmathss ~ gkclasstype + gkschid + race_bnb + gkfreelunch + (1 | gktchid), data = data_clean_2)
+summary(full_model)
+
+plot(full_model, which = 1, main = "Residuals Vs. Fitted", xlab = "Fitted Values", ylab = "Residuals")
+
+library(emmeans)
+
+emmeans(full_model, pairwise~gkclasstype, adjust='tukey')
+```
+
+**Model Output**
+
+```text
+Linear mixed model fit by REML ['lmerMod']
+Formula: 
+gktmathss ~ gkclasstype + gkschid + race_bnb + gkfreelunch +  
+    (1 | gktchid)
+   Data: data_clean_2
+
+REML criterion at convergence: 59330.3
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-6.4040 -0.6379 -0.0524  0.5810  3.9456 
+
+Random effects:
+ Groups   Name        Variance Std.Dev.
+ gktchid  (Intercept)  266.5   16.33   
+ Residual             1516.3   38.94   
+Number of obs: 5852, groups:  gktchid, 325
+
+Fixed effects:
+                          Estimate Std. Error t value
+(Intercept)             457.289283  11.025474  41.476
+gkclasstypeRegular       -8.438876   2.574114  -3.278
+gkclasstypeRegular+Aide  -8.190977   2.559227  -3.201
+gkschid123056            12.366694  15.389557   0.804
+gkschid128068             9.134396  15.400527   0.593
+gkschid128076             0.009713  15.349780   0.001
+gkschid128079             1.226406  15.301972   0.080
+gkschid130085            14.260628  14.414587   0.989
+gkschid159171            51.671883  13.702507   3.771
+gkschid161176            10.396734  14.371328   0.723
+gkschid161183            46.628100  13.348411   3.493
+gkschid162184            26.947798  14.556799   1.851
+gkschid164198            28.451830  15.394190   1.848
+gkschid165199            51.804215  15.459510   3.351
+gkschid166203             8.904601  14.447958   0.616
+gkschid168211            26.318530  13.755599   1.913
+gkschid168214            47.042869  15.389302   3.057
+gkschid169219            45.889660  15.581961   2.945
+gkschid169229            32.365632  12.978260   2.494
+gkschid169231             1.220307  15.361953   0.079
+gkschid169280            19.203088  15.396641   1.247
+gkschid170295            22.223989  14.516593   1.531
+gkschid173312            53.468774  15.344963   3.484
+gkschid176329            52.660717  14.507796   3.630
+gkschid180344            24.449976  13.740638   1.779
+gkschid189378            -0.228447  14.429987  -0.016
+gkschid189382             8.228241  14.564327   0.565
+gkschid189396             8.612595  15.309981   0.563
+gkschid191411            22.481964  15.562205   1.445
+gkschid193422            35.388825  15.301712   2.313
+gkschid193423            40.963528  14.412584   2.842
+gkschid201449            42.335429  13.308849   3.181
+gkschid203452            12.877714  13.763820   0.936
+gkschid203457            32.199844  15.707571   2.050
+gkschid205488            12.384234  15.381740   0.805
+gkschid205489            11.543030  14.422248   0.800
+gkschid205490            -7.307189  15.329550  -0.477
+gkschid205491            17.848186  14.472220   1.233
+gkschid205492            61.536776  14.366891   4.283
+gkschid208501            24.988670  14.546121   1.718
+gkschid208503             5.063631  15.321008   0.331
+gkschid209510             2.850680  13.795753   0.207
+gkschid212522            32.006570  13.793401   2.320
+gkschid215533            49.216853  13.285713   3.704
+gkschid216536            23.633278  13.730824   1.721
+gkschid218562            36.679128  14.624651   2.508
+gkschid221571           -19.736311  13.714545  -1.439
+gkschid221574             2.659519  14.539118   0.183
+gkschid225585            12.277023  14.369664   0.854
+gkschid228606            43.300347  14.371865   3.013
+gkschid230612            57.910826  15.317402   3.781
+gkschid231616            47.671664  15.355445   3.105
+gkschid234628            27.948545  13.743327   2.034
+gkschid244697            12.352264  13.744838   0.899
+gkschid244708             7.629287  13.369184   0.571
+gkschid244723            13.829009  13.713613   1.008
+gkschid244727            33.989729  14.368486   2.366
+gkschid244728            11.374748  15.464276   0.736
+gkschid244736            70.095845  15.480073   4.528
+gkschid244745            56.715374  14.387364   3.942
+gkschid244746            46.114740  15.424141   2.990
+gkschid244755            54.541278  13.036429   4.184
+gkschid244764            37.407428  17.327100   2.159
+gkschid244774            39.608979  13.740909   2.883
+gkschid244776            26.375578  12.852691   2.052
+gkschid244780           110.848111  15.330271   7.231
+gkschid244796            26.168726  14.659333   1.785
+gkschid244799            27.688292  14.538183   1.905
+gkschid244801            29.454576  14.381866   2.048
+gkschid244806            64.986376  13.034453   4.986
+gkschid244818            17.352044  14.340511   1.210
+gkschid244831            27.768814  15.276850   1.818
+gkschid244839            75.108836  13.821027   5.434
+gkschid252885            32.401581  14.457163   2.241
+gkschid253888            29.121647  15.612725   1.865
+gkschid257899            11.497101  13.715720   0.838
+gkschid257905            22.304380  13.055601   1.708
+gkschid259915            20.720162  15.383866   1.347
+gkschid261927            36.974834  14.318081   2.582
+gkschid262937            53.345851  14.503628   3.678
+gkschid264945            36.523232  13.751989   2.656
+race_bnbTRUE            -17.056508   2.234509  -7.633
+gkfreelunchNotFreeLunch  19.808430   1.267888  15.623
+
+
+```
+
+
+**Code for Relabeling Sensitivity Analysis**
+```text
+## Sensitivity Analysis: Relabeling
+
+# relabel class types so that regular classes that dropped into the class size range of small classes are relabeled as such
+
+data_relabeled_2 = data_clean_2 %>%
+  mutate(new_gkclasstype = case_when(
+    gkclasssize <= 17 ~ "Small",
+    gkclasstype == "Regular" ~ "Regular",
+    gkclasstype == "Regular+Aide" ~ "Regular+Aide",
+    .default = "0"
+  ))
+
+# relevel the factor of relabeled class type
+data_relabeled_2$new_gkclasstype = factor(data_relabeled_2$new_gkclasstype, levels=c("Small", "Regular", "Regular+Aide"))
+
+# train on model on the relabeled data
+model_3 = lmer(gktmathss ~ new_gkclasstype + gkschid + race_bnb + gkfreelunch + (1 | gktchid), data = data_relabeled_2)
+summary(model_3)
+
+emmeans(model_3, pairwise~new_gkclasstype, adjust='tukey')
+```
+
+**Output After Relabeling**
+```text
+Linear mixed model fit by REML ['lmerMod']
+Formula: 
+gktmathss ~ new_gkclasstype + gkschid + race_bnb + gkfreelunch +  
+    (1 | gktchid)
+   Data: data_relabeled_2
+
+REML criterion at convergence: 59329.2
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-6.4045 -0.6377 -0.0517  0.5804  3.9447 
+
+Random effects:
+ Groups   Name        Variance Std.Dev.
+ gktchid  (Intercept)  265.1   16.28   
+ Residual             1516.3   38.94   
+Number of obs: 5852, groups:  gktchid, 325
+
+Fixed effects:
+                             Estimate Std. Error t value
+(Intercept)                 457.51918   11.00507  41.574
+new_gkclasstypeRegular       -9.08674    2.61591  -3.474
+new_gkclasstypeRegular+Aide  -8.21027    2.56373  -3.202
+gkschid123056                12.36422   15.35865   0.805
+gkschid128068                 9.13077   15.36960   0.594
+gkschid128076                 0.01303   15.31874   0.001
+gkschid128079                 1.22526   15.27087   0.080
+gkschid130085                14.20363   14.38574   0.987
+gkschid159171                51.70932   13.67479   3.781
+gkschid161176                10.34480   14.34238   0.721
+gkschid161183                46.62848   13.32165   3.500
+gkschid162184                26.89774   14.52822   1.851
+gkschid164198                28.44851   15.36325   1.852
+gkschid165199                51.79989   15.42869   3.357
+gkschid166203                 8.85419   14.41917   0.614
+gkschid168211                26.23394   13.72808   1.911
+gkschid168214                47.03991   15.35835   3.063
+gkschid169219                45.89976   15.55128   2.952
+gkschid169229                32.33260   12.95209   2.496
+gkschid169231                 1.22189   15.33099   0.080
+gkschid169280                19.20401   15.36573   1.250
+gkschid170295                22.17827   14.48791   1.531
+gkschid173312                53.46839   15.31394   3.491
+gkschid176329                52.61066   14.47907   3.634
+gkschid180344                24.36816   13.71307   1.777
+gkschid189378                -0.28550   14.40120  -0.020
+gkschid189382                 8.18479   14.53567   0.563
+gkschid189396                 8.61638   15.27885   0.564
+gkschid191411                19.38334   15.55614   1.246
+gkschid193422                35.38977   15.27062   2.318
+gkschid193423                40.91133   14.38372   2.844
+gkschid201449                42.33328   13.28203   3.187
+gkschid203452                12.91617   13.73623   0.940
+gkschid203457                29.04737   15.70063   1.850
+gkschid205488                12.39376   15.35077   0.807
+gkschid205489                11.48785   14.39341   0.798
+gkschid205490                -7.29901   15.29849  -0.477
+gkschid205491                17.79473   14.44344   1.232
+gkschid205492                61.48607   14.33793   4.288
+gkschid208501                24.93636   14.51749   1.718
+gkschid208503                 5.06422   15.28993   0.331
+gkschid209510                 2.76463   13.76831   0.201
+gkschid212522                31.92099   13.76594   2.319
+gkschid215533                49.22064   13.25885   3.712
+gkschid216536                23.67501   13.70317   1.728
+gkschid218562                32.08768   14.66839   2.188
+gkschid221571               -19.69234   13.68686  -1.439
+gkschid221574                 2.60773   14.51050   0.180
+gkschid225585                12.38981   14.34093   0.864
+gkschid228606                43.24447   14.34292   3.015
+gkschid230612                57.91352   15.28633   3.789
+gkschid231616                47.66874   15.32444   3.111
+gkschid234628                27.86227   13.71579   2.031
+gkschid244697                12.27438   13.71723   0.895
+gkschid244708                 7.63439   13.34248   0.572
+gkschid244723                13.74690   13.68597   1.004
+gkschid244727                33.94034   14.33962   2.367
+gkschid244728                 8.33006   15.45900   0.539
+gkschid244736                70.10223   15.44933   4.538
+gkschid244745                56.66714   14.35851   3.947
+gkschid244746                46.11634   15.39331   2.996
+gkschid244755                54.60640   13.01048   4.197
+gkschid244764                37.19430   17.29348   2.151
+gkschid244774                39.52867   13.71333   2.882
+gkschid244776                26.32896   12.82725   2.053
+gkschid244780               110.85789   15.29923   7.246
+gkschid244796                24.00502   14.65968   1.637
+gkschid244799                27.64082   14.50954   1.905
+gkschid244801                29.40406   14.35295   2.049
+gkschid244806                65.06448   13.00850   5.002
+gkschid244818                17.46868   14.31176   1.221
+gkschid244831                27.76680   15.24572   1.821
+gkschid244839                75.15773   13.79355   5.449
+gkschid252885                32.50179   14.42858   2.253
+gkschid253888                26.09402   15.60644   1.672
+gkschid257899                11.54203   13.68804   0.843
+gkschid257905                22.27387   13.02957   1.709
+gkschid259915                20.72494   15.35290   1.350
+gkschid261927                37.08138   14.28925   2.595
+gkschid262937                53.29374   14.47493   3.682
+gkschid264945                36.43337   13.72448   2.655
+race_bnbTRUE                -17.06417    2.23446  -7.637
+gkfreelunchNotFreeLunch      19.80765    1.26785  15.623
+```
+
+**Sensitivity Analysis**
+
+Code for Sensitivity Analysis
+```text
+STAR.Model.Residuals = residuals(STAR.Model)
+STAR.Model.Fitted = fitted(STAR.Model)
+
+#QQ Plot
+STAR.qqPlot = qqPlot(STAR.Model.Residuals, id = F, main = "QQ Plot", xlab = "Theoretical Quantiles", ylab = "Sample Quantiles")
+
+#Residuals Vs Fitted Plot
+STAR.RvF = plot(STAR.Model, which = 1, main = "Residuals Vs. Fitted", xlab = "Fitted Values", ylab = "Residuals")
+
+#Jitter Residuals Vs Fitted Plot
+STAR.RvF.J = ggplot(data.frame(STAR.Model.Fitted, STAR.Model.Residuals), aes(x = STAR.Model.Fitted, y = STAR.Model.Residuals)) +
+  geom_jitter(width = 0.4, height = 0, alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Fitted Values (Jittered)", y = "Residuals", title = "Residuals Vs. Fitted (Jittered)") +
+  theme_bw()
+```
+
+
 <a href="#top" class="back-to-top-btn" title="Back to top">↑ Top</a>
 
 ```{=html}
